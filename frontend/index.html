@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Ambulance Navigation & Dispatch System</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Leaflet.js Real Interactive Map CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="header-content">
+                <div>
+                    <h1>Smart Ambulance Navigation & Fleet Dispatch System</h1>
+                    <p class="subtitle">Dehradun City Live Map (Leaflet + OSRM) • C++ DSA Priority Engine • MySQL Dispatch DB</p>
+                </div>
+                <div class="header-badges">
+                    <span class="db-badge" id="map-mode-badge">Map: Real Roads (OSRM)</span>
+                    <span class="db-badge" id="db-badge">MySQL: Connected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Top status banner for active alert / reroute -->
+        <div id="status-banner" class="status-banner hidden"></div>
+
+        <main class="dashboard-grid">
+            <!-- Left Column: Forms, Fleet, Queue -->
+            <div class="left-col">
+                <!-- Emergency Intake Form -->
+                <section class="panel">
+                    <h2>Emergency Request Intake</h2>
+                    <form id="emergency-form">
+                        <div class="input-group">
+                            <label for="patient-name">Patient / Caller Name</label>
+                            <input type="text" id="patient-name" placeholder="e.g. Ramesh Chandra" required>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="start-node">Emergency Incident Location</label>
+                            <select id="start-node" required></select>
+                        </div>
+
+                        <div class="input-group">
+                            <label for="target-hospital">Destination Hospital</label>
+                            <select id="target-hospital" required></select>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Patient Triage / Severity Level</label>
+                            <div class="severity-selector">
+                                <label class="severity-option sev-1"><input type="radio" name="severity" value="1" checked> 1 - Critical</label>
+                                <label class="severity-option sev-2"><input type="radio" name="severity" value="2"> 2 - High</label>
+                                <label class="severity-option sev-3"><input type="radio" name="severity" value="3"> 3 - Medium</label>
+                                <label class="severity-option sev-4"><input type="radio" name="severity" value="4"> 4 - Low</label>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" id="btn-submit-request">Register Emergency & Dispatch</button>
+                    </form>
+                </section>
+
+                <!-- Ambulance Fleet Status Panel -->
+                <section class="panel">
+                    <div class="panel-header-flex">
+                        <h2>Ambulance Fleet Status</h2>
+                        <button class="btn-sm" id="btn-refresh-fleet">Refresh</button>
+                    </div>
+                    <div class="table-container">
+                        <table id="fleet-table">
+                            <thead>
+                                <tr>
+                                    <th>Unit ID</th>
+                                    <th>Call Sign</th>
+                                    <th>Station / Location</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fleet-body">
+                                <tr><td colspan="5" style="text-align:center;">Loading fleet...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: Interactive Map, Route Info, Console -->
+            <div class="right-col">
+                <section class="panel">
+                    <div class="map-controls">
+                        <!-- Map View Switcher Tabs -->
+                        <div class="view-switch-tabs">
+                            <button class="tab-btn active" id="tab-real-map">🌍 Real Dehradun Map (Leaflet)</button>
+                            <button class="tab-btn" id="tab-graph-map">📐 DSA Graph View</button>
+                        </div>
+                        <div class="map-action-btns">
+                            <button class="btn btn-secondary btn-sm" id="btn-reset-map">Reset Traffic & Roadblocks</button>
+                        </div>
+                    </div>
+
+                    <!-- 1. Real Leaflet Map Container -->
+                    <div id="real-map-container" class="map-view-wrapper">
+                        <div id="leaflet-map" style="height: 420px; border-radius: 6px; border: 1px solid #cbd5e1;"></div>
+                    </div>
+
+                    <!-- 2. DSA Canvas Graph Container -->
+                    <div id="graph-map-container" class="map-view-wrapper hidden">
+                        <canvas id="map-canvas" width="720" height="420"></canvas>
+                        <p class="graph-hint">Tip: Click any road tag in Graph View to toggle <strong>Normal (1x) → Slow (2x) → Blocked (🚧)</strong>.</p>
+                    </div>
+
+                    <!-- Active Mission & Route Comparison Box -->
+                    <div id="route-info-box" class="route-info-card hidden">
+                        <div class="route-info-header">
+                            <h3 id="mission-title">Active Dispatch Mission</h3>
+                            <span class="badge" id="mission-badge">Dispatched</span>
+                        </div>
+                        <div class="route-stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-label">Assigned Unit</span>
+                                <span class="stat-val" id="stat-ambulance">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Total Distance</span>
+                                <span class="stat-val" id="stat-dist">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Est. Travel Time</span>
+                                <span class="stat-val" id="stat-time">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Route Engine</span>
+                                <span class="stat-val" id="stat-engine">OSRM / Dijkstra</span>
+                            </div>
+                        </div>
+
+                        <!-- Route display -->
+                        <div class="route-details">
+                            <p><strong>Calculated Route:</strong> <span id="route-path-text" class="path-text">--</span></p>
+                            <div id="reroute-comparison" class="reroute-box hidden">
+                                <h4>Dynamic Rerouting Detected (Road Closed)</h4>
+                                <p><strong>Updated Alternative Route:</strong> <span id="reroute-path-text" class="path-text">--</span></p>
+                                <p id="reroute-delta-text" class="delta-text"></p>
+                            </div>
+                        </div>
+
+                        <div class="mission-actions">
+                            <button class="btn btn-success" id="btn-complete-mission">Complete Mission (Mark Available)</button>
+                        </div>
+                    </div>
+
+                    <h3>System Operation Console</h3>
+                    <div class="console" id="console-output"></div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Dispatch History from MySQL Section -->
+        <section class="panel history-section">
+            <div class="panel-header-flex">
+                <h2>MySQL Dispatch History & Audit Records</h2>
+                <div class="filter-controls">
+                    <input type="text" id="history-search" placeholder="Search patient or route...">
+                    <select id="filter-status">
+                        <option value="">All Statuses</option>
+                        <option value="En Route to Patient">En Route to Patient</option>
+                        <option value="Completed">Completed</option>
+                    </select>
+                    <select id="filter-severity">
+                        <option value="">All Severities</option>
+                        <option value="1">Severity 1 (Critical)</option>
+                        <option value="2">Severity 2 (High)</option>
+                        <option value="3">Severity 3 (Medium)</option>
+                        <option value="4">Severity 4 (Low)</option>
+                    </select>
+                    <button class="btn btn-sm" id="btn-filter-history">Filter</button>
+                    <button class="btn btn-secondary btn-sm" id="btn-reset-history">Reset</button>
+                </div>
+            </div>
+
+            <div class="table-container history-table-container">
+                <table id="history-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Time</th>
+                            <th>Patient</th>
+                            <th>Sev</th>
+                            <th>Ambulance</th>
+                            <th>Route (Start -> Incident -> Hospital)</th>
+                            <th>Dist (km)</th>
+                            <th>Est. Time</th>
+                            <th>Rerouted?</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-body">
+                        <tr><td colspan="10" style="text-align:center;">Loading history from MySQL...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- Leaflet.js Real Interactive Map JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="app.js"></script>
+</body>
+</html>
